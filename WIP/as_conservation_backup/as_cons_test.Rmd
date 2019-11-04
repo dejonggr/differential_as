@@ -1,0 +1,684 @@
+```{r setup, include=FALSE}
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+library(data.table)
+library(grid)
+library(gridExtra)
+library(stats)
+library(ggplot2)
+library(car)
+#read.table() read gene txts if necessary
+```
+
+```{r load files}
+#junctionids<- read.csv("/Users/grantdejong/Desktop/scp/junctionids.csv")
+arsenal<-read.table("/Users/grantdejong/Documents/R/fullsampleset.tsv", sep = '\t', header = TRUE); arsenal$species<-NULL
+junctionids<- read.csv("/Users/grantdejong/Desktop/scp/junctionids.tack.csv")
+suppa.events<-read.table("/Users/grantdejong/Desktop/scp/event.psi", sep = "\t", header = T, row.names = NULL)
+```
+
+```{r functions}
+## Arsenal
+
+prop<-function (x) {
+  data.frame(
+    gene=x$gene_name,
+    junct=x$junct,
+    class=x$class,
+    a1=x[4]/(x[5]+x[4]), a2=x[6]/(x[7]+x[6]),
+    a3=x[8]/(x[9]+x[8]), b1=x[10]/(x[11]+x[10]),
+    b2=x[12]/(x[13]+x[12]), b3=x[14]/(x[15]+x[14]), 
+    c1=x[16]/(x[17]+x[16]), c2=x[18]/(x[19]+x[18]),
+    c3=x[20]/(x[21]+x[20]), unique_code=x$unique_code) %>%
+    na.omit(.)
+}
+
+prop.tack<-function (x) {
+  data.frame(
+    gene=x$gene_name,
+    junct=x$junct,
+    class=x$class,
+    a1=x[4]/(x[5]+x[4]), a2=x[6]/(x[7]+x[6]),
+    a3=x[8]/(x[9]+x[8]), unique_code=x$unique_code) %>%
+    na.omit(.)
+}
+
+rminf<-function(x) {
+  x[is.finite(rowSums(x[4:12])),]
+}
+
+## Junction comparisons
+
+compare.junctions<-function(x){
+  a=x[x$junction %in% junctionids$junc1,]
+  a=merge(a, junctionids, by.x="junction", by.y="junc1")
+  y=merge(a, x, by.x="junc2", by.y="junction", all=F)
+  y=y[which(y$event.x==y$event.y),]
+  y$event=y$event.x; y$event.x=NULL; y$event.y=NULL
+  print(y)
+}
+
+divergence<-function(x, y){
+  y=unite(y, unique.x, c("junction", "unique_code.x"), remove = F) %>%
+    unite(., unique.y, c("junc2", "unique_code.y"), remove = F)
+  a=unite(x, junction, c("gene_name","junct"), sep = ".") %>%
+    unite(., unique.event, c("junction", "unique_code"), remove = F)
+  a=a[a$junction %in% junctionids$junc1 | a$junction %in% junctionids$junc2,] %>% .[!(.$unique.event %in% y$unique.x | .$unique.event %in% y$unique.y),]
+  print(t(t(summary(factor(a$class)))))
+}
+
+filter.junctions<-function(x){
+  a=x[x$junction %in% junctionids$junc1 | x$junction %in% junctionids$junc2,]
+  print(a)
+}
+
+## Event details
+
+print.events<-function(x){
+  a=unlist(lapply(levels(x$event),
+    function(y){
+      length(which(x$event==y))
+    }))
+  b=levels(x$event)
+  c=data.frame(count=a, event=b)
+  print(c, quote = F)
+}
+
+## All-in-one
+
+arsenal.events<-function(x){
+  a=prop(x) %>% rminf(.)
+  a=unite(a, junction, c("gene", "junct"), sep = ".", remove = T)
+  b=compare.junctions(a)
+  c=filter.junctions(a)
+  b=print.events(b)
+  c=print.events(c)
+  y=data.frame(qcons.counts=b$count, qcons.event=b$event, all.count=c$count, all.event=c$event)
+  print(y)
+}
+
+cons.junctions<-function(x){
+  a=prop(x) %>% rminf(.)
+  a=unite(a, junction, c("gene", "junct"), sep = ".", remove = T)
+  b=compare.junctions(a)
+}
+
+all.alpha.junctions<-function(x){
+  a=prop(x) %>% rminf(.)
+  a=unite(a, junction, c("gene", "junct"), sep = ".", remove = T)
+  filter.junctions(a)
+}
+
+## testing ##
+
+compare.junctions2<-function(x){
+  a=x[x$junction %in% junctionids$junc1,]
+  a=merge(a, junctionids, by.x="junction", by.y="junc1")
+  y=merge(a, x, by.x="junc2", by.y="junction", all=F)
+  y$event=y$event.x; y$event.x=NULL; y$event.y=NULL
+  print(y)
+}
+
+equivalent.junctions<-function(x){
+  a=prop(x) %>% rminf(.)
+  a=unite(a, junction, c("gene", "junct"), sep = ".", remove = T)
+  b=compare.junctions2(a)
+}
+
+```
+
+```{r arsenal events}
+# Copy of functions below so you remember what's going on
+
+strandedness<-function(x){
+  x$strand<-gsub(".*:([+-]):.*", "\\1", x$unique_code)
+  x<-unite(x, event, c("class", "strand"), sep = "", remove = F)}
+
+# tissue-inclusive filter
+cons.tissue<-arsenal[which(arsenal$SRR3664419_alt>1 & arsenal$SRR3664420_alt>1 & arsenal$SRR3664421_alt>1 | arsenal$SRR3664422_alt>1 & arsenal$SRR3664423_alt>1 & arsenal$SRR3664424_alt>1 | arsenal$SRR3664425_alt>1 & arsenal$SRR3664426_alt>1 & arsenal$SRR3664427_alt>1),]
+
+# 3 reads for each event required - one for each replicate.
+cons.filter<-arsenal[which(arsenal$SRR3664419_alt>1 & arsenal$SRR3664420_alt>1 & arsenal$SRR3664421_alt>1 & arsenal$SRR3664422_alt>1 & arsenal$SRR3664423_alt>1 & arsenal$SRR3664424_alt>1 & arsenal$SRR3664425_alt>1 & arsenal$SRR3664426_alt>1 & arsenal$SRR3664427_alt>1),]
+
+# Overall junctions
+cons.filter.v2<-unite(cons.filter, junctions, c("gene_name", "junct"), sep=".") %>%
+  .[.$junctions %in% junctionids$junc1 | .$junctions %in% junctionids$junc2,]
+summary(factor(cons.filter.v2$class))
+
+# class vs event in the penultimate line dicatates event comparisons
+compare.junctions<-function(x){
+  x=prop(x) %>% rminf(.)
+  x=unite(x, junction, c("gene", "junct"), sep = ".", remove = T)
+  x=strandedness(x)
+  a=x[x$junction %in% junctionids$junc1,]
+  a=merge(a, junctionids, by.x="junction", by.y="junc1")
+  y=merge(a, x, by.x="junc2", by.y="junction", all=F)
+  y=y[which(y$class.x==y$class.y),]
+  y$event=y$event.x; y$event.x=NULL; y$event.y=NULL
+  print(y)
+}
+
+divergent<-function(x){
+  x=prop(x) %>% rminf(.)
+  x=unite(x, junction, c("gene", "junct"), sep = ".", remove = T)
+  a=x[x$junction %in% junctionids$junc1,] %>%
+    .[!(.$junction %in% cons$junction),]
+  b=x[x$junction %in% junctionids$junc2,] %>%
+    .[!(.$junction %in% cons$junc2),]
+  nca=summary(factor(a$class))
+  ncb=summary(factor(b$class))
+  d=t(t(colSums(rbind(nca,ncb))))
+}
+
+homologous.only<-function(y){
+  x=y[!y$unique_code.x=="na:na:+:IR",]
+  x=separate(x, unique_code.y, c("cy", "cy2"), sep = ":", remove = F) %>% separate(., unique_code.x, c("cx", "cx2"), sep = ":", remove = F)  %>% mutate(leny=as.numeric(.$cy2)-as.numeric(.$cy)) %>%
+    mutate(lenx=as.numeric(.$cx2)-as.numeric(.$cx))
+  for (i in 1:nrow(x)) {
+  if(x$lenx[i] == x$leny[i]){x[i, 'homologous'] <- paste0("YES")}
+  else if(x$lenx[i] == x$leny[i]+1){x[i, 'homologous'] <- paste0("YES")}
+  else if(x$lenx[i] == x$leny[i]-1){x[i, 'homologous'] <- paste0("YES")}
+  else{x[i, 'homologous'] <- paste0("NO")}
+  }
+  x=x[which(x$homologous=="YES"),]
+  ir=y[y$unique_code.x=="na:na:+:IR",]
+  z=y[y$unique_code.x %in% x$unique_code.x | y$unique_code.x=="na:na:+:IR",]
+  print(z)
+}
+
+cons<-compare.junctions(cons.filter) %>% homologous.only(.)
+
+conserved=t(t(summary(factor(cons$class.x))))
+# I left the old function up anyways
+div<-divergence(cons.tissue, cons)
+
+conservation.arsenal<-as.data.frame(cbind(conserved, div[rownames(div) %in% rownames(conserved),]))%>%
+  mutate(conservation=as.numeric(.$V1)/as.numeric(.$V2+.$V1)) %>%
+  mutate(row.names=rownames(conserved))
+
+all.qual<-conservation.arsenal %>% rbind(., c(0, 83, 0, "ALTP"))
+
+total<-data.frame(conserved=sum(conservation.arsenal$V1), divergent=sum(conservation.arsenal$V2), total=sum(conservation.arsenal$V1)/(sum(conservation.arsenal$V1)+sum(conservation.arsenal$V2)))
+
+```
+
+```{r sample data processing}
+
+arsenal<-read.table("/Users/grantdejong/Documents/R/fullsampleset.tsv", sep = '\t', header = TRUE); arsenal$species<-NULL
+
+sample_data<-c("elo1", "elo2", "elo3", "mat1", "mat2", "mat3", "mer1", "mer2", "mer3")
+sample_names<-c(rep("elo", 3), rep("mat", 3), rep("mer", 3))
+sampleinfo<-as.data.frame(cbind(sample_data, sample_names))
+
+#samples<-new.env()
+
+## PSI
+
+calculate_psi<-function(x){
+  l=c()
+  for (i in 1:(ncol(x)/2)){
+    k=i*2; j=k-1 # is this the problem line?
+    l[[i]]<-x[j:k]}
+  names(l)=sample_data
+  lapply(l, function(x){x[1]/(x[2]+x[1])})
+}
+
+### This is the list of conditional dfs
+
+t4<-lapply(levels(factor(sampleinfo$sample_names)), function(z){
+  psi[grep(z, names(psi))] %>% as.data.frame(.)})
+
+filter_psi<-function(x){lapply(x, function(x){
+  x %>% filter_at(vars(contains("alt")), all_vars(.>0))
+})}
+
+str(filter_psi(psi_conditional))
+
+```
+
+```{r arsenal tissue-specific conservation}
+
+divergence_old<-function(x, y){
+  y=unite(y, unique.x, c("junction", "unique_code.x"), remove = F) %>%
+    unite(., unique.y, c("junc2", "unique_code.y"), remove = F)
+  a=unite(x, junction, c("gene_name","junct"), sep = ".") %>%
+    unite(., unique.event, c("junction", "unique_code"), remove = F)
+  a=a[a$junction %in% junctionids$junc1 | a$junction %in% junctionids$junc2,] %>% .[!(.$unique.event %in% y$unique.x | .$unique.event %in% y$unique.y),]
+  print(data.frame(summary(factor(a$class))))
+}
+
+divergence<-function(x){
+  
+}
+
+prop.tissue<-function (x) {
+  data.frame(
+    gene=x$gene_name,
+    junct=x$junct,
+    class=x$class,
+    a1=x[4]/(x[5]+x[4]), a2=x[6]/(x[7]+x[6]),
+    a3=x[8]/(x[9]+x[8]), unique_code=x$unique_code) %>%
+    na.omit(.)
+}
+
+compare.junctions.tissue<-function(x){
+  x=prop.tissue(x)
+  x=unite(x, junction, c("gene", "junct"), sep = ".", remove = T)
+  x=strandedness(x)
+  a=x[x$junction %in% junctionids$junc1,]
+  a=merge(a, junctionids, by.x="junction", by.y="junc1")
+  y=merge(a, x, by.x="junc2", by.y="junction", all=F)
+  y=y[which(y$class.x==y$class.y),]
+  y$event=y$event.x; y$event.x=NULL; y$event.y=NULL
+  print(y)
+}
+
+## Elo
+
+elo<-arsenal[which(arsenal$SRR3664419_alt>1 & arsenal$SRR3664420_alt>1 & arsenal$SRR3664421_alt>1),]
+
+cons<-compare.junctions(elo) %>% homologous.only(.)
+conserved=t(t(summary(factor(cons$class.x))))
+div<-divergence(elo, cons)
+conservation.arsenal<-as.data.frame(cbind(conserved, div[rownames(div) %in% rownames(conserved),]))%>%
+  mutate(conservation=as.numeric(.$V1)/as.numeric(.$V2+.$V1)) %>%
+  mutate(row.names=rownames(conserved))
+
+elo.p=conservation.arsenal
+
+total<-data.frame(conserved=sum(conservation.arsenal$V1), divergent=sum(conservation.arsenal$V2), total=sum(conservation.arsenal$V1)/(sum(conservation.arsenal$V1)+sum(conservation.arsenal$V2)))
+
+## Mat
+
+mat<-arsenal[which(arsenal$SRR3664422_alt>1 & arsenal$SRR3664423_alt>1 & arsenal$SRR3664424_alt>1),]
+
+cons<-compare.junctions(mat) %>% homologous.only(.)
+conserved=t(t(summary(factor(cons$class.x))))
+div<-divergence(mat, cons)
+conservation.arsenal<-as.data.frame(cbind(conserved, div[rownames(div) %in% rownames(conserved),]))%>%
+  mutate(conservation=as.numeric(.$V1)/as.numeric(.$V2+.$V1)) %>%
+  mutate(row.names=rownames(conserved))
+
+total<-data.frame(conserved=sum(conservation.arsenal$V1), divergent=sum(conservation.arsenal$V2), total=sum(conservation.arsenal$V1)/(sum(conservation.arsenal$V1)+sum(conservation.arsenal$V2)))
+
+mat.p=conservation.arsenal %>% rbind(., c("0", "35", "0", "ALTP"))
+
+## Mer
+
+mer<-arsenal[which(arsenal$SRR3664425_alt>1 & arsenal$SRR3664426_alt>1 & arsenal$SRR3664427_alt>1),]
+
+cons<-compare.junctions(mer) %>% homologous.only(.)
+conserved=t(t(summary(factor(cons$class.x))))
+div<-divergence(mer, cons)
+conservation.arsenal<-as.data.frame(cbind(conserved, div[rownames(div) %in% rownames(conserved),]))%>%
+  mutate(conservation=as.numeric(.$V1)/as.numeric(.$V2+.$V1)) %>%
+  mutate(row.names=rownames(conserved))
+
+total<-data.frame(conserved=sum(conservation.arsenal$V1), divergent=sum(conservation.arsenal$V2), total=sum(conservation.arsenal$V1)/(sum(conservation.arsenal$V1)+sum(conservation.arsenal$V2)))
+
+mer.p=conservation.arsenal
+
+## Whole leaf
+
+tack <- read.table("/Users/grantdejong/Desktop/scp/Github_Dryad_repo/data/ABC_filtered.tsv", sep = '\t', header = TRUE); tack$species<-NULL
+
+# Removed rows were there were reads mapping to the consitutive form
+tack <- tack[!(tack$A_alt>tack$A_nrm | tack$B_alt>tack$B_nrm | tack$C_alt>tack$C_nrm),]
+
+cons<-compare.junctions.tissue(tack) %>% homologous.only(.)
+conserved=t(t(summary(factor(cons$class.x))))
+div<-divergence(tack, cons)
+conservation.arsenal<-as.data.frame(cbind(conserved, div[rownames(div) %in% rownames(conserved),]))%>%
+  mutate(conservation=as.numeric(.$V1)/as.numeric(.$V2+.$V1)) %>%
+  mutate(row.names=rownames(conserved))
+
+total<-data.frame(conserved=sum(conservation.arsenal$V1), divergent=sum(conservation.arsenal$V2), total=sum(conservation.arsenal$V1)/(sum(conservation.arsenal$V1)+sum(conservation.arsenal$V2)))
+
+```
+
+```{r arsenal quantitative}
+
+## Elo
+
+elo.test <- compare.junctions(elo) %>% homologous.only(.) %>% unite(., id, c("junc2", "junction", "class.x", "unique_code.x", "unique_code.y"), sep = ";") %>% 'rownames<-' (.$id) %>% .[,c(2:4,13:15)]
+
+for (i in 1:nrow(elo.test)) {
+  data_a = as.numeric(c(elo.test[i, 1:3]))
+  data_b = as.numeric(c(elo.test[i, 4:6]))
+  elo.test[i, 'p_values']<-wilcox.test(data_a, data_b, alternative = "two.sided" ,exact = F, correct = F)$p.value
+}
+
+elo.test$class<-gsub(".*:(.*?)$", "\\1", rownames(elo.test))
+
+elo.quant<-summary(factor(elo.test[which(elo.test$p_values<0.05),]$class))
+elo.qdiv<-data.frame(div=t(t(elo.quant)), cons=t(t(summary(factor(elo.test$class))))) %>% mutate(cons=cons-div) %>% mutate(p=cons/(cons+div)) %>% 'rownames<-' (c("ALTA", "ALTD", "IR"))
+
+## Mat
+
+mat.test <- compare.junctions(mat) %>% homologous.only(.) %>% unite(., id, c("junc2", "junction", "class.x", "unique_code.x", "unique_code.y"), sep = ";") %>% 'rownames<-' (.$id) %>% .[,c(5:7,16:18)]
+
+for (i in 1:nrow(mat.test)) {
+  data_a = as.numeric(c(mat.test[i, 1:3]))
+  data_b = as.numeric(c(mat.test[i, 4:6]))
+  mat.test[i, 'p_values']<-wilcox.test(data_a, data_b, alternative = "two.sided" ,exact = F, correct = F)$p.value
+}
+
+mat.test$class<-gsub(".*:(.*?)$", "\\1", rownames(mat.test))
+
+mat.quant<-summary(factor(mat.test[which(mat.test$p_values<0.05),]$class))
+mat.qdiv<-data.frame(div=t(t(mat.quant)), cons=t(t(summary(factor(mat.test$class))))) %>% mutate(cons=cons-div) %>% mutate(p=cons/(cons+div)) %>% 'rownames<-' (c("ALTA", "ALTD", "IR"))
+
+## Mer
+
+mer.test <- compare.junctions(mer) %>% homologous.only(.) %>% unite(., id, c("junc2", "junction", "class.x", "unique_code.x", "unique_code.y"), sep = ";") %>% 'rownames<-' (.$id) %>% .[,c(8:10,19:21)]
+
+for (i in 1:nrow(mer.test)) {
+  data_a = as.numeric(c(mer.test[i, 1:3]))
+  data_b = as.numeric(c(mer.test[i, 4:6]))
+  mer.test[i, 'p_values']<-wilcox.test(data_a, data_b, alternative = "two.sided" ,exact = F, correct = F)$p.value
+}
+
+mer.test$class<-gsub(".*:(.*?)$", "\\1", rownames(mer.test))
+
+mer.quant<-summary(factor(mer.test[which(mer.test$p_values<0.05),]$class))
+mer.qdiv<-data.frame(div=t(t(mer.quant)), cons=t(t(summary(factor(mer.test$class))))) %>% mutate(cons=cons-div) %>% mutate(p=cons/(cons+div)) %>% 'rownames<-' (c("ALTA", "ALTD", "IR"))
+
+## Tack confirmation ##
+
+test <- compare.junctions.tissue(tack) %>% homologous.only(.) %>% unite(., id, c("junc2", "junction", "class.x", "unique_code.x", "unique_code.y"), sep = ";") %>% 'rownames<-' (.$id) %>% .[,c(2:4, 7:9)]
+
+for (i in 1:nrow(test)) {
+  data_a = as.numeric(c(test[i, 1:3]))
+  data_b = as.numeric(c(test[i, 4:6]))
+  test[i, 'p_values']<-wilcox.test(data_a, data_b, mu=0,alternative = "two.sided" , exact = F, correct = F, paired = F)$p.value
+}
+print(length(which(test$p_values<0.05))/length(test$p_values))
+
+test$class<-gsub(".*:(.*?)$", "\\1", rownames(test))
+
+quant<-summary(factor(test[which(test$p_values<0.05),]$class))
+qdiv<-data.frame(div=t(t(quant)), cons=t(t(summary(factor(test$class))))) %>% mutate(cons=cons-div) %>% mutate(p=cons/(cons+div))
+
+
+
+## cons ##
+
+cons<-compare.junctions(cons.filter) %>% homologous.only(.)
+conserved=t(t(summary(factor(cons$class.x))))
+div<-divergence(elo, cons)
+conservation.arsenal<-as.data.frame(cbind(conserved, div[rownames(div) %in% rownames(conserved),]))%>%
+  mutate(conservation=as.numeric(.$V1)/as.numeric(.$V2+.$V1)) %>%
+  mutate(row.names=rownames(conserved))
+
+cons<-compare.junctions(cons.filter) %>% homologous.only(.) %>% unite(., id, c("junc2", "junction", "class.x", "unique_code.x", "unique_code.y"), remove = F, sep = ";") %>% unite(., idA, c("junction", "class.x", "unique_code.x"), remove = F, sep = ";") %>% mutate(idA=gsub("\\.", ";", idA)) %>% unite(., idB, c("junc2", "class.y", "unique_code.y"), remove = F, sep = ";") %>% mutate(idB=gsub("\\.", ";", idB))
+
+all<-data.frame(junction1=cons$junction,
+               junction2=cons$junc2,
+               class=cons$class.x,
+eloAB=elo.test[rownames(elo.test) %in% cons$id,]$p_values, 
+merAB=mer.test[rownames(mer.test) %in% cons$id,]$p_values,
+matAB=mat.test[rownames(mer.test) %in% cons$id,]$p_values,
+emeA=elo_mer[rownames(elo_mer) %in% cons$idA,]$p_values,
+emeB=elo_mer[rownames(elo_mer) %in% cons$idB,]$p_values,
+emA=elo_mat[rownames(elo_mat) %in% cons$idA,]$p_values,
+emB=elo_mat[rownames(elo_mat) %in% cons$idB,]$p_values,
+mmeA=mat_mer[rownames(mat_mer) %in% cons$idA,]$p_values,
+mmeB=mat_mer[rownames(mat_mer) %in% cons$idB,]$p_values)
+
+all.cons<-all[which(all$eloAB<0.05 & all$merAB<0.05 & all$matAB<0.05 &
+all$emA>0.05 & all$emB>0.05 & all$emeA>0.05 & all$emeB>0.05 & all$mmeA>0.05 & all$mmeB >0.05 | all$emA>0.05 & all$emB>0.05 & all$emeA>0.05 & all$emeB>0.05 & all$mmeA>0.05 & all$mmeB>0.05 & all$eloAB>0.05 & all$merAB>0.05 & all$matAB>0.05),]
+
+all.div<-all[!(all$junction1 %in% all.cons$junction1),]
+
+div<-as.data.frame(t(t(summary(factor(all.div$class)))))
+conserved<-rbind(t(t(summary(factor(all.cons$class)))), 0) %>% 'rownames<-' (c("ALTA", "IR", "ALTD")) %>% .[match(rownames(div), rownames(.)),] %>% t(.) %>% t(.)
+
+all.details<-as.data.frame(cbind(conserved, div)) %>% mutate(cons=conserved/(V1+conserved)) 
+
+
+```
+
+```{r simple linear regression}
+
+transform_lr<-function(x){}
+
+# not ideal
+lm_format<-function(x){unite(x, event_id, c("junction", "class.x", "unique_code.x")) %>% 
+    unite(., event_id2, c("junc2", "class.y", "unique_code.y")) %>% 
+    unite(., pair, c("event_id", "event_id2"), sep = "|") %>%
+    gather(., key = "homeolog", value = "proportion", c(contains("alt.x"), contains("alt.y")), factor_key = T) %>% mutate(homeolog_id=gsub(".*x", 0, .$homeolog)) %>% 
+    mutate(homeolog_id=gsub(".*y", 1, .$homeolog_id))}
+
+# center the intercept??
+lm_set<-function(x){
+fit=with(x, 
+     by(x, x[,"pair"], 
+     function(x){lm(proportion ~ homeolog_id, data = x)}))
+t=sapply(fit, function(x){summary(x)$coefficients[2,4]})
+t.adj=p.adjust(t,method = "BH")
+length(t.adj[t.adj<0.05])/length(t.adj)
+}
+
+
+lm.cons<-lapply(conserved_conditional, function(x){
+  x=lm_format(x)
+  p=lm_set(x)
+  print(p)
+})
+
+# Model p-value:
+lmp <- function (modelobject) {
+    if (class(modelobject) != "lm") stop("Not an object of class 'lm' ")
+    f <- summary(modelobject)$fstatistic
+    p <- pf(f[1],f[2],f[3],lower.tail=F)
+    attributes(p) <- NULL
+    return(p)
+}
+
+```
+
+```{r tissue-tissue}
+
+## Elo - Mat
+
+elo_mat <- prop(cons.tissue) %>% unite(., id, c("gene", "junct", "class", "unique_code"), sep = ";") %>% 'rownames<-' (.$id) %>%.[,c(2:4,5:7)]
+
+for (i in 1:nrow(elo_mat)) {
+  data_a = as.numeric(c(elo_mat[i, 1:3]))
+  data_b = as.numeric(c(elo_mat[i, 4:6]))
+  elo_mat[i, 'p_values']<-wilcox.test(data_a, data_b, alternative = "two.sided" ,exact = F, correct = F)$p.value
+}
+
+elo_mat$sig<-factor(elo_mat$p_values<0.05)
+
+## Elo - Mer
+
+elo_mer <- prop(cons.tissue) %>% unite(., id, c("gene", "junct", "class", "unique_code"), sep = ";") %>% 'rownames<-' (.$id) %>% .[,c(2:4,8:10)]
+
+for (i in 1:nrow(elo_mer)) {
+  data_a = as.numeric(c(elo_mer[i, 1:3]))
+  data_b = as.numeric(c(elo_mer[i, 4:6]))
+  elo_mer[i, 'p_values']<-wilcox.test(data_a, data_b, alternative = "two.sided" ,exact = F, correct = F)$p.value
+}
+
+elo_mer$sig<-factor(elo_mer$p_values<0.05)
+
+## Mat - Mer
+
+mat_mer <- prop(cons.tissue) %>% unite(., id, c("gene", "junct", "class", "unique_code"), sep = ";") %>% 'rownames<-' (.$id) %>% .[,c(5:7,8:10)]
+
+for (i in 1:nrow(mat_mer)) {
+  data_a = as.numeric(c(mat_mer[i, 1:3]))
+  data_b = as.numeric(c(mat_mer[i, 4:6]))
+  mat_mer[i, 'p_values']<-wilcox.test(data_a, data_b, alternative = "two.sided" ,exact = F, correct = F)$p.value
+}
+
+mat_mer$sig<-factor(mat_mer$p_values<0.05)
+
+```
+
+```{r qual tissue comparisons}
+
+## Elo - Mat ##
+
+elo.mat<-arsenal[which(arsenal$SRR3664419_alt>1 & arsenal$SRR3664420_alt>1 & arsenal$SRR3664421_alt>1 & arsenal$SRR3664422_alt>1 & arsenal$SRR3664423_alt>1 & arsenal$SRR3664424_alt>1),]
+
+cons<-compare.junctions(elo.mat) %>% homologous.only(.)
+conserved=t(t(summary(factor(cons$class.x))))
+div<-divergence(elo.mat, cons)
+conservation.arsenal<-as.data.frame(cbind(conserved, div[rownames(div) %in% rownames(conserved),]))%>%
+  mutate(conservation=as.numeric(.$V1)/as.numeric(.$V2+.$V1)) %>%
+  mutate(row.names=rownames(conserved))
+
+elo.mat.qual=conservation.arsenal %>% rbind(., c("0", "19", "0", "ALTP"))
+
+total<-data.frame(conserved=sum(conservation.arsenal$V1), divergent=sum(conservation.arsenal$V2), total=sum(conservation.arsenal$V1)/(sum(conservation.arsenal$V1)+sum(conservation.arsenal$V2)))
+
+elo.mat <- compare.junctions(mat) %>% homologous.only(.) %>% unite(., id, c("junc2", "junction", "class.x", "unique_code.x", "unique_code.y"), sep = ";") %>% 'rownames<-' (.$id) %>% .[,c(2:7,13:18)]
+
+### THESE tests are best defined as number of pairs that share the same patterns of divergence/conservation; in mat-mer less ~45% of divgerent pairs are shared between the two tissue types, that's compared to 53% in elo-mer
+
+### Maybe use clustering to inform your decisions?
+### Assess sig for both homeologs first
+
+for (i in 1:nrow(elo.mat)) {
+  data_a = as.numeric(c(elo.mat[i, 1:6]))
+  data_b = as.numeric(c(elo.mat[i, 7:12]))
+  elo.mat[i, 'p_values']<-wilcox.test(data_a, data_b, alternative = "two.sided" ,exact = F, correct = F)$p.value
+}
+print(length(which(elo.mat$p_values<0.05))/length(elo.mat$p_values))
+
+elo.mat$class<-gsub(".*:(.*?)$", "\\1", rownames(elo.mat))
+
+elo.mat.quant<-summary(factor(elo.mat[which(elo.mat$p_values<0.05),]$class))
+elo.mat.qdiv<-data.frame(div=t(t(elo.mat.quant)), cons=t(t(summary(factor(elo.mat$class))))) %>% mutate(cons=cons-div) %>% mutate(p=cons/(cons+div))
+
+
+## Elo - Mer ##
+
+elo.mer<-arsenal[which(arsenal$SRR3664419_alt>1 & arsenal$SRR3664420_alt>1 & arsenal$SRR3664421_alt>1 & arsenal$SRR3664425_alt>1 & arsenal$SRR3664426_alt>1 & arsenal$SRR3664427_alt>1),]
+
+cons<-compare.junctions(elo.mer) %>% homologous.only(.)
+conserved=t(t(summary(factor(cons$class.x))))
+div<-divergence(elo.mer, cons)
+conservation.arsenal<-as.data.frame(cbind(conserved, div[rownames(div) %in% rownames(conserved),]))%>%
+  mutate(conservation=as.numeric(.$V1)/as.numeric(.$V2+.$V1)) %>%
+  mutate(row.names=rownames(conserved))
+
+total<-data.frame(conserved=sum(conservation.arsenal$V1), divergent=sum(conservation.arsenal$V2), total=sum(conservation.arsenal$V1)/(sum(conservation.arsenal$V1)+sum(conservation.arsenal$V2)))
+
+elo.mer.qual=conservation.arsenal %>% rbind(., c("0","19","0","ALTP"))
+
+###EDIT STATS
+elo.mer <- compare.junctions(mat) %>% homologous.only(.) %>% unite(., id, c("junc2", "junction", "class.x", "unique_code.x", "unique_code.y"), sep = ";") %>% 'rownames<-' (.$id) %>% .[,c(2:4,8:10,13:15,19:21)]
+
+for (i in 1:nrow(elo.mer)) {
+  data_a = as.numeric(c(elo.mer[i, 1:6]))
+  data_b = as.numeric(c(elo.mer[i, 7:12]))
+  elo.mer[i, 'p_values']<-wilcox.test(data_a, data_b, alternative = "two.sided" ,exact = F, correct = F)$p.value
+}
+print(length(which(elo.mer$p_values<0.05))/length(elo.mer$p_values))
+
+elo.mer$class<-gsub(".*:(.*?)$", "\\1", rownames(elo.mer))
+
+elo.mer.quant<-summary(factor(elo.mer[which(elo.mer$p_values<0.05),]$class))
+elo.mer.qdiv<-data.frame(div=t(t(elo.mer.quant)), cons=t(t(summary(factor(elo.mer$class))))) %>% mutate(cons=cons-div) %>% mutate(p=cons/(cons+div))
+
+
+## Mat - Mer ##
+
+mat.mer<-arsenal[which(arsenal$SRR3664422_alt>1 & arsenal$SRR3664423_alt>1 & arsenal$SRR3664424_alt>1 & arsenal$SRR3664425_alt>1 & arsenal$SRR3664426_alt>1 & arsenal$SRR3664427_alt>1),]
+
+cons<-compare.junctions(mat.mer) %>% homologous.only(.)
+conserved=t(t(summary(factor(cons$class.x))))
+div<-divergence(mat.mer, cons)
+conservation.arsenal<-as.data.frame(cbind(conserved, div[rownames(div) %in% rownames(conserved),]))%>%
+  mutate(conservation=as.numeric(.$V1)/as.numeric(.$V2+.$V1)) %>%
+  mutate(row.names=rownames(conserved))
+
+total<-data.frame(conserved=sum(conservation.arsenal$V1), divergent=sum(conservation.arsenal$V2), total=sum(conservation.arsenal$V1)/(sum(conservation.arsenal$V1)+sum(conservation.arsenal$V2)))
+
+mat.mer.qual<-conservation.arsenal %>% rbind(c("0", "12", "0", "ALTP"))
+
+mat.mer <- compare.junctions(mat.mer) %>% homologous.only(.) %>% unite(., id, c("junc2", "junction", "class.x", "unique_code.x", "unique_code.y"), sep = ";") %>% 'rownames<-' (.$id) %>% .[,c(5:10,16:21)]
+
+###EDIT STATS
+for (i in 1:nrow(mat.mer)) {
+  data_a = as.numeric(c(mat.mer[i, 1:6]))
+  data_b = as.numeric(c(mat.mer[i, 7:12]))
+  mat.mer[i, 'p_values']<-wilcox.test(data_a, data_b, alternative = "two.sided" ,exact = F, correct = F)$p.value
+}
+print(length(which(mat.mer$p_values<0.05))/length(mat.mer$p_values))
+
+mat.mer$class<-gsub(".*:(.*?)$", "\\1", rownames(mat.mer))
+
+mat.mer.quant<-summary(factor(mat.mer[which(mat.mer$p_values<0.05),]$class))
+mat.mer.qdiv<-data.frame(div=t(t(mat.mer.quant)), cons=t(t(summary(factor(mat.mer$class))))) %>% mutate(cons=cons-div) %>% mutate(p=cons/(cons+div))
+
+```
+
+```{r quant tissue comparison}
+
+elo.mat<-arsenal[which(arsenal$SRR3664419_alt>1 & arsenal$SRR3664420_alt>1 & arsenal$SRR3664421_alt>1 & arsenal$SRR3664422_alt>1 & arsenal$SRR3664423_alt>1 & arsenal$SRR3664424_alt>1),]
+
+elo.mer<-arsenal[which(arsenal$SRR3664419_alt>1 & arsenal$SRR3664420_alt>1 & arsenal$SRR3664421_alt>1 & arsenal$SRR3664425_alt>1 & arsenal$SRR3664426_alt>1 & arsenal$SRR3664427_alt>1),]
+
+mat.mer<-arsenal[which(arsenal$SRR3664422_alt>1 & arsenal$SRR3664423_alt>1 & arsenal$SRR3664424_alt>1 & arsenal$SRR3664425_alt>1 & arsenal$SRR3664426_alt>1 & arsenal$SRR3664427_alt>1),]
+
+## Elo - Mat
+
+cons<-compare.junctions(elo.mat) %>% homologous.only(.) %>% unite(., id, c("junc2", "junction", "class.x", "unique_code.x", "unique_code.y"), remove = F, sep = ";") %>% unite(., idA, c("junction", "class.x", "unique_code.x"), remove = F, sep = ";") %>% mutate(idA=gsub("\\.", ";", idA)) %>% unite(., idB, c("junc2", "class.y", "unique_code.y"), remove = F, sep = ";") %>% mutate(idB=gsub("\\.", ";", idB))
+
+em<-data.frame(junction1=cons$junction,
+               junction2=cons$junc2,
+               class=cons$class.x,
+eloAB=elo.test[rownames(elo.test) %in% cons$id,]$p_values, 
+matAB=mat.test[rownames(mat.test) %in% cons$id,]$p_values, A=elo_mat[rownames(elo_mat) %in% cons$idA,]$p_values,
+B=elo_mat[rownames(elo_mat) %in% cons$idB,]$p_values)
+
+elo.mat.cons<-em[em$eloAB<0.05 & em$matAB<0.05 & em$A>0.05 & em$B >0.05 | em$A>0.05 & em$B >0.05 & em$eloAB>0.05 & em$matAB>0.05,]
+elo.mat.div<-em[!(em$eloAB<0.05 & em$matAB<0.05 & em$A>0.05 & em$B >0.05 | em$A>0.05 & em$B >0.05 & em$eloAB>0.05 & em$matAB>0.05),]
+
+em.cons<-as.data.frame(cbind(t(t(summary(factor(elo.mat.cons$class)))), t(t(summary(factor(elo.mat.div$class)))))) %>% mutate(cons=V1/(V1+V2)) %>% 'rownames<-' (c("ALTA", "ALTD", "IR"))
+
+total=sum(em.cons$V1)/(sum(em.cons$V1)+sum(em.cons$V2))
+
+## Elo - Mer
+
+cons<-compare.junctions(elo.mer) %>% homologous.only(.) %>% unite(., id, c("junc2", "junction", "class.x", "unique_code.x", "unique_code.y"), remove = F, sep = ";") %>% unite(., idA, c("junction", "class.x", "unique_code.x"), remove = F, sep = ";") %>% mutate(idA=gsub("\\.", ";", idA)) %>% unite(., idB, c("junc2", "class.y", "unique_code.y"), remove = F, sep = ";") %>% mutate(idB=gsub("\\.", ";", idB))
+
+eme<-data.frame(junction1=cons$junction,
+               junction2=cons$junc2,
+               class=cons$class.x,
+eloAB=elo.test[rownames(elo.test) %in% cons$id,]$p_values, 
+merAB=mer.test[rownames(mer.test) %in% cons$id,]$p_values, A=elo_mer[rownames(elo_mer) %in% cons$idA,]$p_values,
+B=elo_mer[rownames(elo_mer) %in% cons$idB,]$p_values)
+
+elo.mer.cons<-eme[eme$eloAB<0.05 & eme$merAB<0.05 & eme$A>0.05 & eme$B >0.05 | eme$A>0.05 & eme$B >0.05 & eme$eloAB>0.05 & eme$merAB>0.05,]
+elo.mer.div<-eme[!(eme$eloAB<0.05 & eme$merAB<0.05 & eme$A>0.05 & eme$B >0.05 | eme$A>0.05 & eme$B >0.05 & eme$eloAB>0.05 & eme$merAB>0.05),]
+
+eme.cons<-as.data.frame(cbind(t(t(summary(factor(elo.mer.cons$class)))), t(t(summary(factor(elo.mer.div$class)))))) %>% mutate(cons=V1/(V1+V2)) %>% 'rownames<-' (c("ALTA", "ALTD", "IR"))
+
+total=sum(eme.cons$V1)/(sum(eme.cons$V1)+sum(eme.cons$V2))
+
+## Mat - Mer
+
+cons<-compare.junctions(mat.mer) %>% homologous.only(.) %>% unite(., id, c("junc2", "junction", "class.x", "unique_code.x", "unique_code.y"), remove = F, sep = ";") %>% unite(., idA, c("junction", "class.x", "unique_code.x"), remove = F, sep = ";") %>% mutate(idA=gsub("\\.", ";", idA)) %>% unite(., idB, c("junc2", "class.y", "unique_code.y"), remove = F, sep = ";") %>% mutate(idB=gsub("\\.", ";", idB))
+
+mme<-data.frame(junction1=cons$junction,
+               junction2=cons$junc2,
+               class=cons$class.x,
+matAB=mat.test[rownames(mat.test) %in% cons$id,]$p_values, 
+merAB=mer.test[rownames(mer.test) %in% cons$id,]$p_values, A=mat_mer[rownames(mat_mer) %in% cons$idA,]$p_values,
+B=mat_mer[rownames(mat_mer) %in% cons$idB,]$p_values)
+
+mat.mer.cons<-mme[mme$matAB<0.05 & mme$merAB<0.05 & mme$A>0.05 & mme$B >0.05 | mme$A>0.05 & mme$B >0.05 & mme$merAB>0.05 & mme$matAB>0.05,]
+mat.mer.div<-mme[!(mme$matAB<0.05 & mme$merAB<0.05 & mme$A>0.05 & mme$B >0.05 | mme$A>0.05 & mme$B >0.05 & mme$merAB>0.05 & mme$matAB>0.05),]
+
+mme.cons<-as.data.frame(cbind(t(t(summary(factor(mat.mer.cons$class)))), t(t(summary(factor(mat.mer.div$class)))))) %>% mutate(cons=V1/(V1+V2)) %>% 'rownames<-' (c("ALTA", "ALTD", "IR"))
+
+total=sum(mme.cons$V1)/(sum(mme.cons$V1)+sum(mme.cons$V2))
+
+```

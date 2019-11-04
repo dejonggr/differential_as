@@ -1,0 +1,309 @@
+```{r setup, include=FALSE}
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+library(data.table)
+library(grid)
+library(gridExtra)
+library(stats)
+library(ggplot2)
+library(betareg)
+library(betaboost)
+library(venn)
+library(VennDiagram)
+library(car)
+library(lsmeans)
+library(emmeans)
+#read.table() read gene txts if necessary
+```
+
+```{r}
+### REQ: EVERYTHING
+# Tissue
+junctionids <- read.csv("~/Desktop/scp/junctionids.tack.csv")
+arsenal <- read.table("/Users/grantdejong/Desktop/scp/tissue_rna_seq_crit1_filtered.tsv", sep = '\t', header = TRUE); arsenal$species<-NULL
+sampleinfo <- read.table("/Users/grantdejong/Desktop/scp/samples_tissues_only.tsv", sep = '\t', header = T)
+# Cell-type
+junctionids <- read.csv("~/Desktop/scp/junctionids.tack.csv")
+arsenal <- read.table("/Users/grantdejong/Desktop/scp/sc_rnaseq_crit1_filtered.tsv", sep = '\t', header = TRUE); arsenal$species<-NULL
+sampleinfo <- read.table("/Users/grantdejong/Desktop/scp/samples.tsv", sep = '\t', header = T)
+
+```
+
+
+```{r}
+
+
+
+## reformatting for arsenal
+
+gff<-read.table("/Users/grantdejong/Downloads/Araport11_GFF3_genes_transposons.201606.gff", sep = '\t', header = F, quote = "")
+gtf<-read.table("/Users/grantdejong/Downloads/Araport11_GFF3_genes_transposons.201606.gtf", sep = '\t', header = F, quote = "")
+tair<-read.table("/Users/grantdejong/Downloads/TAIR10_GFF3_genes.gff", sep = '\t', header = F, quote = "")
+
+# add gene and mRNA fields to formatted gtf (isolate with which="gene" or "mRNA", rbind, then sort by coords or find a way to sort gff)
+
+format_gff<-function(x,y,z){
+ x = x %>%
+    mutate(V9=gsub("transcript_id (.*?);", "Parent=\\1", .$V9)) %>%
+    mutate(V9=gsub(" gene_id (.*?);", "", .$V9))
+ y = y[which(y$V3=="gene" | y$V3=="mRNA"),]
+ z = z[which(z$V3=="chromosome"),]
+rbind(x,y,z) %>% arrange(.$V4) # still doesn't sort by chromosomes
+}
+
+formatted.gff<-format_gff(gtf,gff,tair)
+
+# Sort post R
+# sed out the quotes post R
+write.table(formatted.gff, file="~/Desktop/TAIR10_GFF3_genes.gff", sep = "\t", col.names = F, quote = F, row.names = F)
+
+## Remove single genes:
+exons.only=formatted.gff[which(formatted.gff$V3=="exon"),] %>%
+  mutate(V10=gsub("Parent=\"(.*?)\\..*$", "\\1", .$V9))
+exons.only.list=unique(exons.only$V10)
+
+genes_with_exons=formatted.gff %>% 
+  mutate(V10=gsub("Parent=\"(.*?)\\..*$", "\\1", .$V9)) %>%
+  mutate(V10=gsub(""))
+
+# OR add a fake exon
+
+
+# Representative gene models
+gene_models<-formatted.gff %>% mutate(V9=gsub("Parent=\"(.*?)\"", "\\1", formatted.gff$V9)) %>% filter(V3=="exon") %>% select(V9) %>% unique(.) %>% arrange(.$V9)
+gene_models<-data.frame(model=gene_models$V9,gene=gsub("(.*?)\\..*","\\1",gene_models$V9))
+
+write.table(gene_models, file="~/Desktop/TAIR10_representative_gene_models", sep = "\t", col.names = F, quote = F, row.names = F)
+
+# More accurate representative gene models
+library(seqinr)
+rep_cdna<-read.fasta(file="~/Downloads/Araport11_genes.201606.cdna.repr.fasta.gz")
+rep_cdna<-names(rep_cdna)
+rep_gene_models<-data.frame(.=rep_cdna)
+
+genes=gene_models$gene %>% unique(.)
+rep_genes=gsub("(.*?)\\..*","\\1",rep_cdna)
+genes_unannotated=genes[!(genes %in% rep_genes)] %>% gsub("^(.*?)$", "\\1\\.1", .) %>% as.data.frame(.)
+
+# Add anti-overlap as well?
+rep_gene_models<-rbind(rep_gene_models, genes_unannotated)
+
+write.table(rep_gene_models, file="~/Desktop/TAIR10_representative_gene_models", sep = "\t", col.names = F, quote = F, row.names = F)
+
+## last minute test
+gene_exc=test[grep("novel_transcribed_region", test$V9, invert = F),]
+asda = gsub(".*Name=(.*?)", "\\1", gene_exc$V9)
+
+
+# messy but intended for debugging, not beauty
+test.genes=gsub("Parent=(.*?)", "\\1", test$V9)
+test.genes=gsub("ID=(.*?);.*$", "\\1", test.genes)
+test.genes=gsub("(.*?);.*$", "\\1", test.genes)
+test.genes=gsub("(.*?)\\..*$", "\\1", test.genes) 
+test.genes=unique(test.genes)
+test.genes=test.genes[grep("Chr", test.genes, invert = T)]
+
+test.rep.genes=gsub("(.*?)\\..*$", "\\1", rep_gene_models$.)
+
+antioverlap=test.genes[!(test.genes %in% test.rep.genes)]
+antioverlap=gsub("^(.*?)$", "\\1\\.1", antioverlap)
+
+
+# remove everything that these genes include??? for loop through asda list and grep them out
+
+test2=test[grep("novel_transcribed_region", test$V9, invert = T),]
+
+##########
+
+# QC testing
+
+conserved_conditional_FC<-lapply(conserved_conditional, function(x){log_FC_list(x) %>% select(-contains("alt"))}) 
+
+t<-conserved_conditional_FC$COL %>% select(contains("1_FC")) %>% qqnorm(.)
+
+qqnorm(conserved_conditional_FC$devCOR$devCOR_1_FC)
+qqline(conserved_conditional_FC$devCOR$devCOR_1_FC)
+
+# QC for statisticsal test determination 
+qq_plots_1<-lapply(conserved_conditional_FC, function(x){x %>% select(contains("1_FC")) %>% qqnorm(.)})
+qq_plots_2
+qq_plots_3
+
+# gaussin glm
+
+BLR_fit_test<-function(x){
+  fit=with(x,
+           by(x, x[,"pair"],
+              function(x){
+                glm( ~ homeolog_id, family= binomial(link="logit"), data = x)}))}
+
+LR_fit<-function(x){
+  fit=with(x,
+           by, x[,"pair"],
+            function(x){
+              glm( ~ homeolog_id, family=gaussian(), data = x)})}
+
+#########
+##### plot
+
+x=Quantitative$COL
+  x=data.frame(event = rownames(x), div=x$Divergent, quant_div=x$`Quant. Div.`, quant_ns=x$Unsupported, quant_cons=x$Conserved) %>%
+    melt(., id.var="event")
+
+limit=sum(x$value)+300 # To ensure the y-axis is never fixed (as that can remove geoms)
+
+t=ggplot(x, aes(x=factor(event), y=as.numeric(value), fill=fct_rev(factor(variable))))+
+  geom_bar(stat = "identity", width = .3)+
+  scale_y_continuous(limits = c(0, limit))+
+  scale_fill_manual(values=c("#62929E", "azure2", "#546A7B","#C6C5B9"))+
+  xlab("")+
+  ylab("")+
+  guides(fill=FALSE)+
+  theme_bw() + theme(panel.border = element_rect(colour = "black", fill=NA, size=1), panel.grid.major = element_blank(),
+                     panel.grid.minor = element_blank())+
+  theme(axis.text.x=element_text(angle=90,hjust=1))
+
+#### summary quant
+
+conform<-function(x,y){
+  df            <- merge(x, y, by= "row.names", all = T)
+  rownames(df)  <- df$Row.names
+  df$Row.names  <- NULL
+  return(df)
+}
+
+reduce_test<-function(x,d,c,n){
+    q=x[sapply(x, function(x) dim(x)[1]) > 0] # Removes samples with missing information
+    q=lapply(q, function(x){x %>% `rownames<-`(x$Event) %>% select(-Event)}) # For merge
+    d=lapply(d, function(d){as.data.frame(summary(factor(d$class.x)))}) # Divergent
+    c=lapply(c, function(c){as.data.frame(summary(factor(c$class.x)))}) # Conserved
+    n=lapply(n, function(n){as.data.frame(summary(factor(n$class.x)))}) # Non-sig events
+    mapply(function(q,d,n,c){Reduce(conform ,list(q,d,n,c))}, q,d,n,c, SIMPLIFY = F)}
+
+reduce_test<-function(x,d,c,n){
+    q=x[sapply(x, function(x) dim(x)[1]) > 0] # Removes samples with missing information
+    q=lapply(q, function(x){x %>% `rownames<-`(x$Event) %>% select(-Event)}) # For merge
+    d=lapply(d, function(d){as.data.frame(summary(factor(d$class.x)))}) # Divergent
+    c=lapply(c, function(c){as.data.frame(summary(factor(c$class.x)))}) # Conserved
+    n=lapply(n, function(n){as.data.frame(summary(factor(n$class.x)))}) # Non-sig events
+    s=mapply(function(q,d,n,c){Reduce(conform ,list(q,d,n,c))}, q,d,n,c, SIMPLIFY = F)
+    # Pipe the output to make it more concise?
+    s=lapply(s, function(x){x[is.na(x)] = 0; invisible(return(x))})
+    s=lapply(s, function(x){x$Perc_Cons=x[6]/(x[1]+x[2]); invisible(return(x))})
+    s=lapply(s, function(x){colnames(x)=c("Divergent", "Qual. Cons.","Perc_Q_Cons", "Quant. Div.", "Unsupported", "Conserved", "Perc_Cons"); invisible(return(x))})
+    return(s)
+  }
+
+
+reduce_test(summary, BLR_div_list, BLR_cons_list, BLR_NS_list)
+
+
+summary_conditional_quant<-function(x,y,z,a){
+    q=x[sapply(x, function(x) dim(x)[1]) > 0] # Removes samples with missing information
+    d=lapply(y, function(y){as.data.frame(summary(factor(y$class.x)))}) # Divergent
+    c=lapply(z, function(z){as.data.frame(summary(factor(z$class.x)))}) # Conserved
+    n=lapply(a, function(a){a[!(a %in% y$pair) | !(a %in% z$pair), ]}) # ADD NA COLUMN AS WELL
+    n=lapply(n, function(n){as.data.frame(summary(factor(n$class.x)))})
+    s=mapply(function(x,y){s=merge(x, y, all=T, by.x="Event", by.y="row.names")}, q, d, SIMPLIFY = F)
+    ### ADD ALL SUBSEQUENT COLUMNS?
+    s=lapply(s, function(x){x[is.na(x)] = 0; invisible(return(x))})
+    s=lapply(s, function(x){x$quant_cons=x[5]/(x[2]+x[3]); invisible(return(x))})
+    s=lapply(s, function(x){
+      colnames(x)=c("Event", "Divergent","Qual_cons", "%Qual_cons", "Quant_cons", "%Quant_cons"); invisible(return(x))
+    })
+    return(s)
+  }
+
+
+
+#### regrid without transformation:
+
+BLR_equivalence<-function(x){
+  fit=with(x,
+           by(x, x[,"pair"],
+              function(x){
+                glm(cbind(nrm_counts,alt_counts) ~ homeolog_id, family= binomial(link="logit"), data = x)}))}
+
+#########
+BLR_fit_test<-function(x){
+  fit=with(x,
+           by(x, x[,"pair"],
+              function(x){
+                glm(cbind(nrm_counts,alt_counts) ~ homeolog_id, family= binomial(link="logit"), data = x)}))}
+
+t10=BLR_fit_test(t01)
+
+t1em<-lapply(t10, function(x) emmeans(x, "homeolog_id", type = "response"))
+# removed the "response only" argument
+t1ps<-lapply(t1em, function(x) pairs(x, reverse = T))
+#t1ps<-lapply(t1em, function(x) contrast(x, reverse = T))
+# See if these results eg. 18% is due to the logit link and therefore it'd be the same/similar when PSI is used or it's regrided
+t1eq<-lapply(t1ps, function(x) emmeans::test(x, adjust = "fdr", side = "=", delta = 0.05,  df=4))
+
+test<-lapply(t10, function(x){
+  x=ref_grid(x)
+  x=regrid(emmeans(x, "homeolog_id", type = "response"))
+  x=pairs(x, reverse = T)
+  x=emmeans::test(x, adjust = "fdr", side = "=", delta = 0.05,  df=4)
+  x[1,6]
+})
+
+
+test<-lapply(t10, function(x){
+  x=ref_grid(x)
+  x=regrid(emmeans(x, "homeolog_id", type = "response")) %>%
+    pairs(., reverse = T) %>% emmeans::test(., adjust = "fdr", side = "=", delta = 0.05,  df=4) %>% 
+    .[1,6]
+})
+
+t1rg<-lapply(t10, function(x) ref_grid(x))
+t1em<-lapply(t1rg, function(x) regrid(emmeans(x, "homeolog_id", type = "response")))
+
+
+length(which(lapply( t1eq, function(x){if (x[1,6]<0.05){print("ok")} else {print("fuck")}})=="ok"))/length(t1eq) # what the fuuck
+
+t1ls=lapply(t1, function(x) lsmeans(x, "homeolog_id"))
+t5=lapply(t1ls, function(x){
+  eq.res=test(contrast(x, "pairwise"), side = "=", adjust = "fdr", delta = 0.05)
+  eq.res[1,6]
+  })
+
+t2=BLR_fit_PSI(t02)
+
+BLR_fit_test<-function(x){
+  fit=with(x,
+           by(x, x[,"pair"],
+              function(x){
+                fit=glm(cbind(nrm_counts,alt_counts) ~ homeolog_id, family= binomial(link="logit"), data = x)}))}
+
+BLR_fit_PSI<-function(x){
+  fit=with(x,
+           by(x, x[,"pair"],
+              function(x){
+                fit=glm(proportion ~ homeolog_id, family= binomial(link="logit"), data = x)}))}
+
+
+
+
+
+t<-lapply(qual_conserved, function(x){BLR_format(x) %>% test_fit_eq(.)})
+
+t=BLR_format(qual_conserved$COL) %>% BLR_fit_test(.)
+
+t4=test_fit_eq(t01)
+
+test_fit_eq<-function(x){
+  fit=with(x, 
+           by(x, x[,"pair"], 
+              function(x){fit=glm(cbind(nrm_counts,alt_counts) ~ homeolog_id, family= binomial(link="logit"), data = x)
+              eq.res=test(contrast(fit, "pairwise"), side = "=", adjust = "fdr", delta = 0.05)
+              eq.res[1,6]}))
+  p.adjust(fit, method = "BH")
+}
+
+
+
+
+```
