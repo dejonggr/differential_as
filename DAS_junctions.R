@@ -19,22 +19,7 @@ packages=c("magrittr","devtools","plyr","dplyr","tidyr","stats","car","brglm2")
 ## Libraries
 if(length(args) > 1) {
   # Some of these are redundant
-  
-  
   invisible(lapply(packages, function(x){suppressPackageStartupMessages(suppressWarnings(library(noquote(x), quietly = T, character.only = T)))}))
-  
-  
-  suppressWarnings(require(magrittr, quietly = T, warn.conflicts = FALSE))
-  suppressWarnings(require(devtools, quietly = T, warn.conflicts = FALSE))
-  suppressWarnings(require(plyr, quietly = T, warn.conflicts = FALSE))
-  suppressWarnings(require(dplyr, quietly = T, warn.conflicts = FALSE))
-  suppressWarnings(require(bindrcpp, quietly = T, warn.conflicts = FALSE))
-  suppressWarnings(require(tidyr, quietly = T, warn.conflicts = FALSE))
-  suppressWarnings(require(reshape2, quietly = T, warn.conflicts = FALSE))
-  suppressWarnings(require(stats, quietly = T, warn.conflicts = FALSE))
-  suppressWarnings(require(car, quietly = T, warn.conflicts = FALSE))
-  suppressWarnings(require(betareg, quietly = T, warn.conflicts = FALSE))
-  suppressWarnings(require(brglm2, quietly = T, warn.conflicts = FALSE))
 }
 
 
