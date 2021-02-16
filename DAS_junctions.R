@@ -170,8 +170,9 @@ fold_change = function(x,n){
 # was a filter specified?
 if(any(grepl("n=", args))){
   alt_filter = args[grep("^n=", args)] %>% gsub("n=", "", .) %>% as.numeric()
-} else { message("No specified alt. read depth cutoff; defaulting to sum(8) read minimum per event.") }
-
+} else { 
+  alt_filter=8
+  message("No specified alt. read depth cutoff; defaulting to sum(8) read minimum per event.") }
 
 if(!any(grepl("filter=off", args))){
 Juncs = filter_events(arsenal, alt_filter) %>% 
